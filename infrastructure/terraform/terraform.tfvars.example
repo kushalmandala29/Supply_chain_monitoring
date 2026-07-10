@@ -1,0 +1,23 @@
+# ==============================================================================
+# Terraform Variables — Example Values
+# ==============================================================================
+# Copy this file to terraform.tfvars and replace placeholder values.
+# NEVER commit terraform.tfvars to version control.
+# ==============================================================================
+
+aws_region  = "us-east-1"
+environment = "dev"
+
+# VPC & Networking
+vpc_id             = "vpc-REPLACE_ME"
+rds_subnet_ids     = ["subnet-REPLACE_ME_1", "subnet-REPLACE_ME_2"]
+rds_allowed_cidrs  = ["10.0.0.0/16"]
+
+# RDS Configuration
+rds_db_name             = "risk_intelligence"
+rds_username            = "db_orchestrator"
+rds_password            = "REPLACE_WITH_SECURE_PASSWORD"
+rds_publicly_accessible = false
+
+# Agent Configuration
+zscore_anomaly_threshold = "2.5"

@@ -1,0 +1,78 @@
+{
+  "mcpServers": {
+    "firecrawl_core": {
+      "command": "node",
+      "args": ["/usr/local/lib/node_modules/firecrawl-mcp/dist/index.js"],
+      "env": {
+        "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}",
+        "FIRECRAWL_API_URL": "${FIRECRAWL_API_URL}"
+      }
+    },
+    "scrape_do_proxy": {
+      "command": "python",
+      "args": ["-m", "scrape_do_mcp_server", "--port", "8081"],
+      "env": {
+        "SCRAPEDO_API_TOKEN": "${SCRAPEDO_API_TOKEN}"
+      }
+    },
+    "cpp_spatial_engine": {
+      "command": "/opt/spatial_engine/bin/winding_number_mcp",
+      "args": ["--precision", "high"],
+      "env": {
+        "GEO_CACHE_DIR": "${GEO_CACHE_DIR}"
+      }
+    },
+    "sql_analytics": {
+      "command": "python",
+      "args": ["-m", "sql_analytics_mcp_server", "--port", "8082"],
+      "env": {
+        "POSTGRES_HOST": "${POSTGRES_HOST}",
+        "POSTGRES_PORT": "${POSTGRES_PORT}",
+        "POSTGRES_DB": "${POSTGRES_DB}",
+        "POSTGRES_USER": "${POSTGRES_USER}",
+        "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}"
+      }
+    },
+    "neo4j_topology": {
+      "command": "node",
+      "args": ["/opt/mcp-plugins/neo4j/index.js"],
+      "env": {
+        "NEO4J_URI": "${NEO4J_URI}",
+        "NEO4J_USER": "${NEO4J_USER}",
+        "NEO4J_PASSWORD": "${NEO4J_PASSWORD}"
+      }
+    }
+  },
+  "llmProviders": {
+    "z_ai_endpoint": {
+      "baseURL": "${ZAI_API_BASE_URL}",
+      "apiKey": "${ZAI_API_KEY}",
+      "defaultModel": "glm-5.2",
+      "models": {
+        "glm-5.2": {
+          "contextWindow": 1000000,
+          "usage": ["supervisor", "logistics", "synthesis"]
+        },
+        "glm-4.6": {
+          "contextWindow": 128000,
+          "usage": ["finance"]
+        }
+      }
+    },
+    "google_gemini_endpoint": {
+      "baseURL": "${GEMINI_API_BASE_URL}",
+      "apiKey": "${GEMINI_API_KEY}",
+      "defaultModel": "gemini-1.5-flash",
+      "models": {
+        "gemini-1.5-flash": {
+          "contextWindow": 1000000,
+          "usage": ["intelligence", "spatial", "geopolitical"]
+        },
+        "gemini-1.5-pro": {
+          "contextWindow": 2000000,
+          "usage": ["vision"]
+        }
+      }
+    }
+  }
+}
