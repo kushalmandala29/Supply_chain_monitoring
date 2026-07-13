@@ -169,22 +169,26 @@ def _fetch_newsapi_articles(settings, query: str) -> list[dict]:
 
 
 def _fetch_gdelt_articles(settings, query: str) -> list[dict]:
-    try:
-        response = requests.get(
-            f"{settings.gdelt_base_url.rstrip('/')}/doc/doc",
-            params={
-                "query": query,
-                "mode": "ArtList",
-                "format": "json",
-                "maxrecords": 10,
-                "sort": "DateDesc",
-            },
-            timeout=15,
-        )
-        response.raise_for_status()
-    except requests.RequestException:
-        logger.exception("GDELT fetch failed for query %r", query)
-        return []
+    for attempt in range(3):
+        try:
+            response = requests.get(
+                f"{settings.gdelt_base_url.rstrip('/')}/doc/doc",
+                params={
+                    "query": query,
+                    "mode": "ArtList",
+                    "format": "json",
+                    "maxrecords": 10,
+                    "sort": "DateDesc",
+                },
+                timeout=20,
+            )
+            response.raise_for_status()
+            break
+        except requests.RequestException as e:
+            if attempt == 2:
+                logger.warning("GDELT fetch failed after 3 attempts for query %r: %s", query, e)
+                return []
+            time.sleep(2 ** attempt)
     articles = []
     for article in response.json().get("articles", []):
         normalized = _normalize_article(

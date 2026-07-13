@@ -1,4 +1,4 @@
-version: "3.9"
+
 
 # Only the stateful data services run in Docker. The gateway, agents, ETL
 # workers, and frontend are run natively on the host (see README.md) -- their

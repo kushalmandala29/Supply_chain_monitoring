@@ -12,7 +12,10 @@ etl:
     query: "supply chain disruption OR shipping delay OR port congestion"
   weather:
     interval_minutes: 15
-    sources: [weather_api, maritime_alerts]
+    # open_meteo is free/keyless and always on; weather_api/maritime_alerts
+    # are keyed providers, wired to WEATHER_API_KEY/weather_api_base_url in
+    # etl/config.py when a real one is provisioned.
+    sources: [open_meteo, weather_api, maritime_alerts]
   commodity:
     interval_minutes: 60
     sources: [market_api]
@@ -26,7 +29,9 @@ risk_thresholds:
   low: 0.0
 
 redis_streams:
+  query_submitted: query.submitted
   query_received: query.received
+  query_router: query.router
   agent_status: agent.status
   news_ingested: news.ingested
   weather_updated: weather.updated
@@ -35,11 +40,22 @@ redis_streams:
   route_recomputed: route.recomputed
   risk_detected: risk.detected
   explanation_updated: explanation.updated
+  explanation_chunk: explanation.chunk
+  map_updated: map.updated
   kpi_update: kpi.update
   kpi_alert: kpi.alert
   consumer_group: agents
 
 agents:
+  router:
+    enabled: true
+    priority: 3
+  mapper:
+    enabled: true
+    priority: 2
+  synthesizer:
+    enabled: true
+    priority: 3
   intel:
     enabled: true
     priority: 1
@@ -56,7 +72,7 @@ agents:
     enabled: true
     priority: 1
   supervisor:
-    enabled: true
+    enabled: false
     priority: 3
 
 # Intent -> agent activation map used by the Query Router. Adding a new intent

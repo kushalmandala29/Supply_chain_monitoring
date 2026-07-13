@@ -25,6 +25,7 @@ from app.models.query import UserQuery
 logger = logging.getLogger(__name__)
 
 RESULT_STREAM_KEYS = [
+    "query_router",
     "agent_status",
     "news_ingested",
     "weather_updated",
@@ -33,6 +34,8 @@ RESULT_STREAM_KEYS = [
     "route_recomputed",
     "risk_detected",
     "explanation_updated",
+    "explanation_chunk",
+    "map_updated",
     "kpi_update",
     "kpi_alert",
 ]
@@ -80,17 +83,16 @@ async def handle_connection(ws: WebSocket, session_id: str) -> None:
         while True:
             raw = await ws.receive_json()
             user_query = UserQuery(session_id=session_id, query=raw["query"])
-            routed = route_query(user_query)
             await bus.publish(
-                "query_received",
+                "query_submitted",
                 {
-                    "session_id": routed.session_id,
-                    "query": routed.query,
-                    "intent": routed.intent,
-                    "agents": routed.agents,
+                    "session_id": user_query.session_id,
+                    "query": user_query.query,
                 },
             )
-            await ws.send_json({"stream": "query_router", "payload": routed.model_dump()})
+            # The frontend expects a quick query_router response to know the active agents.
+            # But now, the router agent will publish query_received. The frontend should
+            # just wait for query_received (or query_router stream) which will be forwarded.
     except WebSocketDisconnect:
         logger.info("session %s disconnected", session_id)
     finally:

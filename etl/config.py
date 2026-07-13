@@ -33,10 +33,17 @@ class Settings(BaseSettings):
     reliefweb_base_url: str = "https://api.reliefweb.int/v1"
     weather_api_key: str = ""
     weather_api_base_url: str = ""
+    # Open-Meteo serves current conditions + forecasts publicly, no API key
+    # required -- the default weather source (see etl/tasks/weather.py) so
+    # weather risk works out of the box without provisioning a keyed provider.
+    open_meteo_base_url: str = "https://api.open-meteo.com/v1/forecast"
     commodity_api_key: str = ""
     commodity_api_base_url: str = ""
     # NASA GIBS serves imagery tiles (WMTS/WMS) publicly, no API key required.
     nasa_gibs_base_url: str = "https://gibs.earthdata.nasa.gov/wmts/epsg4326/best"
+    # Where the ETL can read facility locations from (reuses the existing
+    # gateway endpoint rather than adding a second direct DB dependency).
+    gateway_http_url: str = "http://localhost:8010"
 
 
 @lru_cache

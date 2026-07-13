@@ -6,7 +6,11 @@ import { SourceCard } from "./SourceCard";
 
 export interface PopupData {
   id:       string;
-  sentence: string;
+  /** Quoted text, when this popup was spawned from a sentence click */
+  sentence?: string;
+  /** Direct image URL, when this popup was auto-spawned by an imagery event (e.g. Vision Agent) */
+  imageUrl?: string;
+  imageCaption?: string;
   /** Sources relevant to this sentence (pre-filtered by caller) */
   sources:  Source[];
   /** Initial screen position (px) */
@@ -104,23 +108,41 @@ export function InfoPopup({ popup, onClose, zIndex, onFocus }: InfoPopupProps) {
         </span>
       </div>
 
+      {/* ── Image (auto-popups from imagery events) ─────────────────── */}
+      {popup.imageUrl && (
+        <div className="px-3 pt-3 pb-1">
+          <img
+            src={popup.imageUrl}
+            alt={popup.imageCaption ?? "Satellite imagery"}
+            className="w-full rounded-lg border border-cyan-400/15 object-cover"
+            style={{ maxHeight: "14rem" }}
+            loading="lazy"
+          />
+          {popup.imageCaption && (
+            <p className="mt-1.5 text-[10px] text-cyan-300/50 truncate">{popup.imageCaption}</p>
+          )}
+        </div>
+      )}
+
       {/* ── Quoted sentence ──────────────────────────────────────────── */}
-      <div className="px-3 pt-3 pb-2">
-        <div
-          className="rounded-xl border border-cyan-400/15 px-3 py-2.5"
-          style={{ background: "rgba(34,211,238,0.05)" }}
-        >
-          {/* decorative left bar */}
-          <div className="flex gap-2">
-            <div className="w-0.5 rounded-full bg-cyan-400/40 shrink-0" />
-            <p className="text-[12px] text-cyan-100/90 leading-relaxed font-light italic">
-              {popup.sentence}
-            </p>
+      {popup.sentence && (
+        <div className="px-3 pt-3 pb-2">
+          <div
+            className="rounded-xl border border-cyan-400/15 px-3 py-2.5"
+            style={{ background: "rgba(34,211,238,0.05)" }}
+          >
+            {/* decorative left bar */}
+            <div className="flex gap-2">
+              <div className="w-0.5 rounded-full bg-cyan-400/40 shrink-0" />
+              <p className="text-[12px] text-cyan-100/90 leading-relaxed font-light italic">
+                {popup.sentence}
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* ── Related sources ──────────────────────────────────────────── */}
+      {/* ── Related sources (skipped entirely for image-only popups with none) ── */}
       {popup.sources.length > 0 ? (
         <div className="px-3 pb-3 space-y-2">
           <div className="text-[8px] font-semibold uppercase tracking-widest text-cyan-400/35 mb-1">
@@ -130,11 +152,11 @@ export function InfoPopup({ popup, onClose, zIndex, onFocus }: InfoPopupProps) {
             <SourceCard key={s.url ?? i} source={s} index={i} delay={i * 60} />
           ))}
         </div>
-      ) : (
+      ) : popup.sentence ? (
         <div className="px-3 pb-3">
           <p className="text-[10px] text-cyan-400/30 italic">No direct sources for this point.</p>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

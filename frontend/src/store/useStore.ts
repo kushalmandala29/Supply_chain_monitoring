@@ -2,6 +2,8 @@ import { create } from "zustand";
 
 export type StreamKey =
   | "query_router"
+  | "explanation_chunk"
+  | "map_updated"
   | "agent_status"
   | "news_ingested"
   | "weather_updated"
@@ -116,6 +118,25 @@ interface Article {
   location?: { lat: number; lon: number; label?: string };
 }
 
+export interface MapPin {
+  id: string;
+  lat: number;
+  lon: number;
+  type: string;
+  label: string;
+  receivedAt: number;
+}
+
+export interface SatelliteImagery {
+  id: string;
+  url: string;
+  label?: string;
+  date?: string;
+  lat?: number;
+  lon?: number;
+  receivedAt: number;
+}
+
 interface JarvisState {
   connectionStatus: "connecting" | "open" | "closed";
   trace: AgentTraceEntry[];
@@ -129,11 +150,14 @@ interface JarvisState {
   networkRoutes: NetworkRoute[];
   networkGeofences: NetworkGeofence[];
   newsPins: NewsPin[];
+  mapPins: MapPin[];
+  lastSatelliteImagery: SatelliteImagery | null;
   kpiByEntity: Record<string, KpiEntity>;
   kpiAlerts: KpiAlert[];
   kpiDashboard: Record<string, number>;
   kpiConfig: Record<string, KpiConfigEntry>;
   correlationArcs: CorrelationArc[];
+  activeQuery: string | null;
   sendQuery: (query: string) => void;
   setConnectionStatus: (status: JarvisState["connectionStatus"]) => void;
   setSendQuery: (sendQuery: (query: string) => void) => void;
@@ -143,6 +167,24 @@ interface JarvisState {
   fetchKpiDashboard: () => Promise<void>;
   fetchKpiConfig: () => Promise<void>;
 }
+
+// Streams worth a line in the Agent Trace Console. Deliberately excludes
+// high-frequency/ambient streams (explanation_chunk fires once per LLM
+// token; kpi_update and map_updated fire continuously) that would otherwise
+// flood the console with raw JSON -- those still update state normally,
+// they just don't get a trace entry.
+const TRACE_HIGHLIGHT_STREAMS = new Set<StreamKey>([
+  "query_router",
+  "agent_status",
+  "explanation_updated",
+  "news_ingested",
+  "weather_updated",
+  "commodity_updated",
+  "satellite_ready",
+  "route_recomputed",
+  "risk_detected",
+  "kpi_alert",
+]);
 
 // Module-level (not store state) debounce timer for GlobalDashboard's
 // live-refresh-on-KPI-activity behavior -- see the kpi_update/kpi_alert
@@ -162,6 +204,7 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   explanation: null,
   sources: [],
   activeAgents: [],
+  activeQuery: null,
   queryStartedAt: null,
   lastQueryDurationMs: null,
   mapMarker: null,
@@ -169,6 +212,8 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   networkRoutes: [],
   networkGeofences: [],
   newsPins: [],
+  mapPins: [],
+  lastSatelliteImagery: null,
   kpiByEntity: {},
   kpiAlerts: [],
   kpiDashboard: {},
@@ -181,21 +226,25 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   setSendQuery: (sendQuery) => set({ sendQuery }),
   ingest: (stream, payload) =>
     set((state) => {
-      const entry: AgentTraceEntry = {
-        id: `${stream}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        stream,
-        payload,
-        receivedAt: Date.now(),
-      };
+      const next: Partial<JarvisState> = {};
 
-      const next: Partial<JarvisState> = {
-        trace: [...state.trace.slice(-49), entry],
-      };
+      if (TRACE_HIGHLIGHT_STREAMS.has(stream)) {
+        const entry: AgentTraceEntry = {
+          id: `${stream}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          stream,
+          payload,
+          receivedAt: Date.now(),
+        };
+        next.trace = [...state.trace.slice(-49), entry];
+      }
 
       if (stream === "query_router" && Array.isArray(payload.agents)) {
         next.activeAgents = payload.agents as string[];
+        next.activeQuery = (payload.query as string) ?? null;
         next.queryStartedAt = Date.now();
         next.lastQueryDurationMs = null;
+        next.explanation = null;
+        next.sources = [];
       }
       if (stream === "explanation_updated" && typeof payload.explanation === "string") {
         next.explanation = payload.explanation;
@@ -277,7 +326,43 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
         }
       }
 
-      // Ambient live feed: articles the News ETL managed to geocode get a
+      if (stream === "explanation_chunk" && typeof payload.chunk === "string") {
+        next.explanation = (state.explanation || "") + payload.chunk;
+      }
+
+      // Vision Agent resolved a real location for the query -- fly the map
+      // there (same mapMarker mechanism explanation_updated uses) and surface
+      // the satellite picture so it doesn't require clicking through the
+      // explanation to see it.
+      if (stream === "satellite_ready" && payload.center) {
+        const center = payload.center as { lat?: number; lon?: number; label?: string };
+        if (typeof center.lat === "number" && typeof center.lon === "number") {
+          next.mapMarker = { lat: center.lat, lon: center.lon, label: center.label };
+        }
+        const imagery = Array.isArray(payload.imagery) ? payload.imagery : [];
+        const first = imagery[0] as { snapshot_url?: string; date?: string } | undefined;
+        if (first?.snapshot_url) {
+          next.lastSatelliteImagery = {
+            id: `sat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            url: first.snapshot_url,
+            label: center.label,
+            date: first.date,
+            lat: center.lat,
+            lon: center.lon,
+            receivedAt: Date.now(),
+          };
+        }
+      }
+
+      if (stream === "map_updated" && Array.isArray(payload.points)) {
+        const newPins = payload.points.map((p: any) => ({
+          ...p,
+          receivedAt: Date.now(),
+        }));
+        next.mapPins = [...state.mapPins.slice(-49), ...newPins];
+      }
+
+      // Live ambient feed: articles the News ETL managed to geocode get a
       // fading pin on the map (WorldMap prunes/animates by age).
       if (stream === "news_ingested" && Array.isArray(payload.articles)) {
         const geocoded = (payload.articles as Article[]).filter(

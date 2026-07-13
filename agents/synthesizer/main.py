@@ -109,8 +109,8 @@ def _unwrap_duckduckgo_redirect(href: str) -> str:
     return href
 
 
-class SupervisorAgent(BaseAgent):
-    name = "supervisor"
+class SynthesizerAgent(BaseAgent):
+    name = "synthesizer"
     output_stream_key = "explanation_updated"
 
     def __init__(self) -> None:
@@ -138,7 +138,7 @@ class SupervisorAgent(BaseAgent):
         kpis = await self._fetch_nearby_kpis(location) if location else []
         
         await self._publish_status(session_id, query, "started", detail="Synthesizing with LLM...")
-        explanation = await self._synthesize(query, sources, sibling_results, kpis, settings)
+        explanation = await self._synthesize(query, sources, sibling_results, kpis, settings, session_id=session_id)
 
         return {
             "query": query,
@@ -303,6 +303,7 @@ class SupervisorAgent(BaseAgent):
         sibling_results: dict[str, Any],
         kpis: list[dict[str, Any]],
         settings,
+        session_id: str | None = None,
     ) -> str:
         context_parts = []
         for agent, result in sibling_results.items():
@@ -324,7 +325,8 @@ class SupervisorAgent(BaseAgent):
         context = "\n\n".join(context_parts) or "No additional context available."
 
         try:
-            return await self._invoke_openrouter(query, context, settings)
+            explanation = await self._invoke_openrouter(query, context, settings, session_id=session_id)
+            return explanation
         except Exception as exc:  # noqa: BLE001 -- degrade gracefully, don't drop what we gathered
             logger.warning("[SUPERVISOR] OpenRouter call failed: %s", exc)
             return self._fallback_synthesis(query, context_parts, exc)
@@ -359,7 +361,7 @@ class SupervisorAgent(BaseAgent):
             return f"{len(result['prices'])} commodity price update(s)."
         return str(result)[:700]
 
-    async def _invoke_openrouter(self, query: str, context: str, settings) -> str:
+    async def _invoke_openrouter(self, query: str, context: str, settings, session_id: str | None = None) -> str:
         if not settings.openrouter_api_key:
             raise ValueError("OPENROUTER_API_KEY is not set")
 
@@ -379,98 +381,67 @@ class SupervisorAgent(BaseAgent):
                     "role": "system",
                     "content": (
                         "You are the Supervisor Agent for a supply-chain intelligence platform. "
-                        "Act like an operations lead: synthesize specialist-agent findings, live KPI "
-                        "values, and web sources into concise, factual, decision-ready guidance. "
-                        "Prioritize supply chain impact, mapped locations, likely affected transport/"
-                        "supplier flows, confidence, and immediate actions. When KPI values are "
-                        "provided, ground the supply-chain-impact section in those numbers and note "
-                        "which facilities are already degraded or at risk of degrading. Do not invent "
-                        "facts or KPI numbers; say what is unknown."
+                        "Operators skim this in seconds -- write highlights, not a report. "
+                        "Every line is a single short bullet starting with '- ', at most ~15 words, "
+                        "no filler or restating the question. Do not hallucinate data not present "
+                        "in the context."
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
                         f"Question: {query}\n\nCollected context:\n{context}\n\n"
-                        "Return exactly these sections: Situation, Supply-chain impact, "
-                        "Recommended actions, Confidence."
+                        "Return exactly these sections, each with 1-2 bullet points (never a "
+                        "paragraph): Situation, Supply-chain impact, Recommended actions, Confidence."
                     ),
                 },
             ],
             "temperature": 0.2,
-            "max_tokens": 700,
+            "max_tokens": 300,
+            "stream": True,
         }
+        
+        explanation = ""
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
+            async with client.stream(
+                "POST",
                 f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
                 headers=headers,
                 json=payload,
-            )
-        response.raise_for_status()
-        data = response.json()
-        return self._extract_openrouter_text(data)
-
-    @staticmethod
-    def _extract_openrouter_text(data: dict[str, Any]) -> str:
-        choices = data.get("choices") or []
-        if not choices:
-            raise ValueError("OpenRouter response had no choices")
-
-        choice = choices[0]
-        message = choice.get("message") or {}
-
-        # --- Primary: standard content field ---
-        content = message.get("content")
-        if content is not None:
-            if isinstance(content, str):
-                stripped = content.strip()
-                if stripped:
-                    return stripped
-            elif isinstance(content, list):
-                text_parts = [
-                    str(part.get("text", ""))
-                    for part in content
-                    if isinstance(part, dict) and part.get("text") is not None
-                ]
-                text = "\n".join(p.strip() for p in text_parts if p.strip())
-                if text:
-                    return text
-
-        # --- Fallback: reasoning models (DeepSeek, Qwen, nex-n2-mini) store
-        #     the visible output in reasoning_content or reasoning instead of
-        #     content, which may be null / empty. ---
-        for key in ("reasoning_content", "reasoning"):
-            value = message.get(key)
-            if value is not None and isinstance(value, str):
-                stripped = value.strip()
-                if stripped:
-                    return stripped
-
-        # --- Last resort: some providers embed text at the top-level choice ---
-        top_text = choice.get("text")
-        if top_text is not None and isinstance(top_text, str) and top_text.strip():
-            return top_text.strip()
-
-        finish_reason = choice.get("finish_reason")
-        raise ValueError(f"OpenRouter response had no text content (finish_reason={finish_reason!r}, keys={list(message.keys())})")
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if line.startswith("data: ") and line != "data: [DONE]":
+                        try:
+                            import json
+                            chunk_data = json.loads(line[6:])
+                            delta = chunk_data.get("choices", [{}])[0].get("delta", {})
+                            text = delta.get("content", "")
+                            if text:
+                                explanation += text
+                                if session_id:
+                                    await self.bus.publish("explanation_chunk", {"session_id": session_id, "chunk": text})
+                        except Exception as e:
+                            logger.error("SSE parse error: %s", e)
+        return explanation
 
     @staticmethod
     def _fallback_synthesis(query: str, context_parts: list[str], exc: Exception) -> str:
         if not context_parts:
             return (
-                f"Situation: I could not gather enough live context for {query!r}.\n"
-                "Supply-chain impact: Unknown until live feeds return data.\n"
-                "Recommended actions: Check ETL/API keys and retry the query.\n"
-                f"Confidence: Low. LLM synthesis failed: {exc}."
+                f"Situation:\n- No live context gathered for {query!r}.\n"
+                "Supply-chain impact:\n- Unknown until live feeds return data.\n"
+                "Recommended actions:\n- Check ETL/API keys and retry.\n"
+                f"Confidence:\n- Low, LLM synthesis failed ({exc})."
             )
         return (
-            f"Situation: Gathered {len(context_parts)} source group(s) for {query!r}, "
-            "but OpenRouter synthesis failed.\n"
-            "Supply-chain impact: Review the source snippets in the trace; prioritize any "
-            "port, route, supplier, weather, or commodity disruption mentioned there.\n"
-            "Recommended actions: Verify OPENROUTER_API_KEY/OPENROUTER_MODEL in .env, keep "
-            "watching the mapped live feed, and rerun once the model call succeeds.\n"
-            f"Confidence: Medium on source collection, low on final synthesis. Error: {exc}."
+            f"Situation:\n- Gathered {len(context_parts)} source group(s) for {query!r}, "
+            "but LLM synthesis failed.\n"
+            "Supply-chain impact:\n- Check the trace for port, route, supplier, weather, or "
+            "commodity disruptions.\n"
+            "Recommended actions:\n- Verify OPENROUTER_API_KEY/OPENROUTER_MODEL in .env, "
+            "then rerun.\n"
+            f"Confidence:\n- Medium on collection, low on synthesis ({exc})."
         )
 
     async def close(self) -> None:
@@ -479,4 +450,4 @@ class SupervisorAgent(BaseAgent):
 
 
 if __name__ == "__main__":
-    run_agent(SupervisorAgent())
+    run_agent(SynthesizerAgent())

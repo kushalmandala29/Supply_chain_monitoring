@@ -92,7 +92,7 @@ export default function AgentConsole() {
   }, [trace.length]);
 
   return (
-    <div className="absolute bottom-4 left-4 w-[22rem] flex flex-col glass rounded-2xl border border-cyan-400/15 overflow-hidden"
+    <div className="absolute bottom-8 left-4 w-[22rem] flex flex-col glass rounded-2xl border border-cyan-400/15 overflow-hidden"
          style={{ maxHeight: "min(340px, 42vh)" }}>
 
       {/* Header */}

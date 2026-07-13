@@ -11,10 +11,13 @@
 //
 // The actual geofencing / ST_* style geometry work is not implemented yet --
 // that will call into PostGIS and/or a C++ geometry library (e.g. GEOS) once
-// the Knowledge Layer schema (section 9) is in place. Real geometry and
-// real weather-ETL data are both still stubs, so this agent's weather and
-// geography risk components use a neutral 0.5 placeholder until those exist
-// (see kNeutralComponentScore below) -- everything else (fill_rate,
+// the Knowledge Layer schema (section 9) is in place. Real geometry is still
+// a stub, so the "geography" risk component uses a neutral 0.5 placeholder
+// until that exists (see kNeutralComponentScore below). "weather" is real as
+// of etl/tasks/weather.py (Open-Meteo, per-entity risk on the weather.updated
+// stream) -- this agent reads the most recent broadcast per entity, falling
+// back to the same neutral placeholder for any entity Weather ETL hasn't
+// covered yet. Everything else (fill_rate,
 // inventory_accuracy, picking_accuracy) is real, sourced from the
 // kpi.update stream that backend/app/services/kpi/websocket_publisher.py
 // publishes on every KPI recompute (PostgreSQL remains the source of truth;
@@ -42,6 +45,7 @@ constexpr const char* kAgentName = "spatial";
 constexpr const char* kOutputStreamKey = "risk_detected";  // spatial overlap analysis feeds risk zones
 constexpr double kNeutralComponentScore = 0.5;  // weather/geography placeholder until those pipelines are real
 constexpr int kKpiUpdateLookback = 100;         // how many recent kpi.update messages to scan per query
+constexpr int kWeatherUpdateLookback = 3;       // weather.updated carries every entity per cycle, so a few recent cycles suffice
 
 struct RedisEndpoint {
     std::string host = "localhost";
@@ -90,6 +94,7 @@ std::map<std::string, std::string> load_stream_names(const YAML::Node& root) {
             {"query_received", "query.received"},
             {"risk_detected", "risk.detected"},
             {"kpi_update", "kpi.update"},
+            {"weather_updated", "weather.updated"},
             {"consumer_group", "agents"},
         };
     }
@@ -188,12 +193,33 @@ std::map<std::string, std::map<std::string, double>> latest_kpis_by_entity(
     return by_entity;
 }
 
+// Weather ETL (etl/tasks/weather.py) broadcasts one weather.updated message
+// per cycle with an "entities" array of {entity_id, risk, ...}. Scanning
+// most-recent-first and keeping only the first value seen per entity_id
+// gives the latest reading per facility, same recency convention as
+// latest_kpis_by_entity below.
+std::map<std::string, double> latest_weather_risk_by_entity(const std::vector<json>& weather_updates) {
+    std::map<std::string, double> risk_by_entity;
+    for (const auto& payload : weather_updates) {
+        if (!payload.contains("entities") || !payload["entities"].is_array()) continue;
+        for (const auto& entity : payload["entities"]) {
+            if (!entity.contains("entity_id") || !entity.contains("risk")) continue;
+            std::string entity_id = entity["entity_id"].get<std::string>();
+            if (risk_by_entity.find(entity_id) == risk_by_entity.end()) {
+                risk_by_entity[entity_id] = entity["risk"].get<double>();
+            }
+        }
+    }
+    return risk_by_entity;
+}
+
 // Combines weather risk + geography risk + fill_rate + inventory_accuracy +
 // picking_accuracy into one compounded operational risk score per entity,
 // weighted by config/settings.yaml's spatial.risk_weights, renormalized
 // over whichever components are actually present for that entity.
 json compute_operational_risk(
     const std::map<std::string, std::map<std::string, double>>& kpis_by_entity,
+    const std::map<std::string, double>& weather_risk_by_entity,
     const std::map<std::string, double>& weights,
     const std::map<std::string, double>& thresholds) {
     json entities = json::array();
@@ -203,13 +229,22 @@ json compute_operational_risk(
         double weight_total = 0.0;
         json components = json::object();
 
-        // weather/geography: neutral placeholder until the weather ETL /
-        // PostGIS geometry pipelines produce real per-entity scores.
-        for (const char* placeholder_component : {"weather", "geography"}) {
-            double w = weights.count(placeholder_component) ? weights.at(placeholder_component) : 0.0;
+        // weather: real per-entity risk from Weather ETL when available,
+        // neutral placeholder otherwise. geography: neutral placeholder
+        // until the PostGIS geometry pipeline produces real per-entity scores.
+        {
+            double w = weights.count("weather") ? weights.at("weather") : 0.0;
+            auto it = weather_risk_by_entity.find(entity_id);
+            double weather_score = it != weather_risk_by_entity.end() ? it->second : kNeutralComponentScore;
+            weighted_sum += w * weather_score;
+            weight_total += w;
+            components["weather"] = weather_score;
+        }
+        {
+            double w = weights.count("geography") ? weights.at("geography") : 0.0;
             weighted_sum += w * kNeutralComponentScore;
             weight_total += w;
-            components[placeholder_component] = kNeutralComponentScore;
+            components["geography"] = kNeutralComponentScore;
         }
 
         for (const char* kpi_component : {"fill_rate", "inventory_accuracy", "picking_accuracy"}) {
@@ -248,6 +283,7 @@ int main() {
                                            ? streams.at(kOutputStreamKey)
                                            : "risk.detected";
     const std::string kpi_update_stream = streams.count("kpi_update") ? streams.at("kpi_update") : "kpi.update";
+    const std::string weather_updated_stream = streams.count("weather_updated") ? streams.at("weather_updated") : "weather.updated";
     const std::string group_prefix = streams.count("consumer_group") ? streams.at("consumer_group") : "agents";
     const std::string group = group_prefix + "." + kAgentName;
 
@@ -321,7 +357,10 @@ int main() {
                         // ST_Distance work against PostGIS goes here.
                         const auto kpi_updates = xrevrange_recent(ctx, kpi_update_stream, kKpiUpdateLookback);
                         const auto kpis_by_entity = latest_kpis_by_entity(kpi_updates);
-                        json operational_risk = compute_operational_risk(kpis_by_entity, risk_weights, risk_thresholds);
+                        const auto weather_updates = xrevrange_recent(ctx, weather_updated_stream, kWeatherUpdateLookback);
+                        const auto weather_risk_by_entity = latest_weather_risk_by_entity(weather_updates);
+                        json operational_risk = compute_operational_risk(
+                            kpis_by_entity, weather_risk_by_entity, risk_weights, risk_thresholds);
 
                         json result = {
                             {"session_id", payload.value("session_id", "")},
@@ -329,8 +368,8 @@ int main() {
                             {"geofences", json::array()},
                             {"operational_risk", operational_risk},
                             {"note", operational_risk.empty()
-                                         ? "No kpi.update data observed yet for: " + query
-                                         : nullptr},
+                                         ? json("No kpi.update data observed yet for: " + query)
+                                         : json()},
                         };
 
                         redisReply* xadd_reply = static_cast<redisReply*>(redisCommand(

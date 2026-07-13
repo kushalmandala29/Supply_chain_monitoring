@@ -2,8 +2,9 @@
 
 Real-time operational intelligence system that monitors global events, tracks
 live supply-chain KPIs, and maps their combined impact onto a knowledge graph
--- visualized through a Jarvis-style HUD over an interactive 3D globe. Full
-product/architecture spec: [docs/PRD.md](docs/PRD.md).
+-- visualized through a Jarvis-style command center: a sidebar-navigated
+dashboard with a live 2D map, KPI views, alerts, and an AI intelligence panel.
+Full product/architecture spec: [docs/PRD.md](docs/PRD.md).
 
 ## What this platform does
 
@@ -17,11 +18,19 @@ product/architecture spec: [docs/PRD.md](docs/PRD.md).
   Accuracy -- computed from real order/inventory events, thresholded entirely
   from config (nothing hardcoded), and pushed to every connected client the
   moment they change.
-- **Visualize the whole network as a 3D globe** (Globe.gl + Three.js):
-  facilities with concentric KPI-health rings, shipping routes animated by
-  cycle time and colored by on-time performance, pulsing alert rings on
-  threshold breaches, and temporary correlation arcs when a news event may
-  degrade a nearby facility's KPIs.
+- **Command-center UI** (React Router + MapLibre GL + deck.gl): a collapsible
+  sidebar (Command Center, Live Map, KPI Dashboard, Intelligence Feed, Alerts,
+  Investigations, ...) and a live 2D map where every clickable layer --
+  facilities, shipping routes, risk geofences, KPI alerts, and an ambient
+  live news-pin feed that updates independently of any query -- routes
+  through the exact same select-fly-ask pipeline the search bar uses, so
+  clicking a risk zone gets the same live, animated response as typing a
+  question about it.
+- **Auto-surfaced intel, not click-to-reveal**: when the Vision Agent
+  resolves a real NASA GIBS satellite image for a query's location, it pops
+  up automatically (no click needed) while the map flies there with the same
+  motion; answers render as short, scannable highlights instead of long
+  paragraphs.
 
 ## Architecture
 
@@ -32,29 +41,31 @@ product/architecture spec: [docs/PRD.md](docs/PRD.md).
 
 ```mermaid
 flowchart TB
-    subgraph Client["Frontend (React + Zustand + Globe.gl/Three.js)"]
-        UI["Query bar / Explanation panel /\nGlobal KPI Dashboard / 3D Globe"]
+    subgraph Client["Frontend (React + Zustand + MapLibre GL/deck.gl)"]
+        UI["Sidebar + Topbar search /\nIntelligence Panel / Live Map / KPI Dashboard"]
     end
 
     subgraph Gateway["FastAPI Gateway"]
         WS["WebSocket /ws\n(query in, every stream out)"]
         REST["REST: /map/network, /kpi/*,\n/webhooks/orders/*, /webhooks/inventory/*"]
-        QR["Query Router\n(config-driven intent -> agent list)"]
     end
 
     subgraph Bus["Redis Streams (shared blackboard)"]
+        QSUB["query.submitted"]
         QREC["query.received"]
-        RESULTS["news.ingested / weather.updated / commodity.updated\nsatellite.ready / route.recomputed / risk.detected\nexplanation.updated"]
+        RESULTS["news.ingested / weather.updated / commodity.updated\nsatellite.ready / route.recomputed / risk.detected\nexplanation.updated / map.updated"]
         KPI_STREAMS["kpi.update / kpi.alert"]
     end
 
     subgraph Agents["Agents (each its own consumer group)"]
+        ROUTER["Router\n(LLM-based intent -> agent list)"]
+        MAPPER["Mapper\n(news/explanations -> map geometry)"]
         INTEL["Intel\nnews -> graph -> KPI impact"]
-        SPATIAL["Spatial (C++)\nweather + geography + KPI\n-weighted compounded risk"]
-        VISION["Vision\n(stub)"]
+        SPATIAL["Spatial (C++)\nreal weather + KPI, placeholder geography\n-> weighted compounded risk"]
+        VISION["Vision\ngeocodes query -> NASA GIBS imagery"]
         LOGISTICS["Logistics\nranked KPI queries + graph context"]
         COMMODITY["Commodity\nprice volatility <-> inventory KPIs"]
-        SUPERVISOR["Supervisor\nmerges siblings + web search +\nnearby KPIs -> LLM synthesis"]
+        SYNTHESIS["Synthesizer\nmerges siblings + web search +\nnearby KPIs -> LLM streaming synthesis"]
     end
 
     subgraph KpiPipeline["services/kpi (backend)"]
@@ -71,11 +82,13 @@ flowchart TB
 
     UI <--> |WebSocket| WS
     UI --> |on mount / hover| REST
-    WS --> QR --> QREC
-    QREC --> INTEL & SPATIAL & VISION & LOGISTICS & COMMODITY & SUPERVISOR
-    INTEL & SPATIAL & VISION & LOGISTICS & COMMODITY --> RESULTS
-    SUPERVISOR -. observes sibling streams .-> RESULTS
-    SUPERVISOR --> RESULTS
+    WS --> QSUB
+    QSUB --> ROUTER
+    ROUTER --> QREC
+    QREC --> INTEL & SPATIAL & VISION & LOGISTICS & COMMODITY & SYNTHESIS & MAPPER
+    INTEL & SPATIAL & VISION & LOGISTICS & COMMODITY & MAPPER --> RESULTS
+    SYNTHESIS -. observes sibling streams .-> RESULTS
+    SYNTHESIS --> RESULTS
     RESULTS --> WS
 
     REST --> CALC
@@ -90,8 +103,8 @@ flowchart TB
     COMMODITY --> PG
     INTEL --> NEO
     INTEL --> PG
-    SUPERVISOR --> PG
-    SUPERVISOR --> NEO
+    SYNTHESIS --> PG
+    SYNTHESIS --> NEO
     SPATIAL -. XREVRANGE .-> KPI_STREAMS
 ```
 
@@ -108,7 +121,7 @@ directly.
 ```
 backend/
   app/
-    api/            FastAPI routes: query_router, websocket, map_router, kpi_router (webhooks + reads)
+    api/            FastAPI routes: websocket, map_router, kpi_router (webhooks + reads)
     core/            Config loader, Postgres/Neo4j clients, Redis StreamBus
     models/          Pydantic schemas (query.py, kpi.py)
     services/kpi/     calculator, inventory_metrics, logistics_metrics,
@@ -117,20 +130,40 @@ backend/
   tests/            pytest for the KPI formulas + threshold engine
 agents/
   common/           Shared BaseAgent, Redis StreamBus, Postgres client, config loader
+  router/           LLM-based intent classification and agent selection
+  mapper/           Listens to outputs and geocodes entities into map pins
   intel/            News search + geocoding + nearby-facility KPI impact
-  spatial/          C++: geofencing + KPI-weighted compounded operational risk
-  vision/           Satellite/weather imagery agent (still a stub)
+  spatial/          C++: KPI + real-weather-weighted compounded operational risk
+                      (geofencing/ST_* geometry still TODO)
+  vision/           Geocodes a query, returns NASA GIBS satellite imagery tiles
   logistics/        KPI-aware: ranked Postgres queries joined with Neo4j graph context
   commodity/         Commodity price volatility <-> inventory KPI correlation
-  supervisor/       Merges siblings + web search + nearby KPIs, asks the LLM
-                      for one final answer (PRD's Narrative Agent role)
+  synthesizer/      Merges siblings + web search + nearby KPIs, asks the LLM
+                      for one final streaming answer (PRD's Narrative Agent role)
 etl/                Celery Beat + workers for ambient news/weather/commodity/satellite ingestion
 frontend/
-  src/components/globe/   GlobeScene, FacilityLayer, RouteLayer, AlertLayer,
-                          CorrelationLayer, CameraController, GlobeHUD
-  src/components/HUD/     HudPanel, AgentConsole, ExplanationPanel, InfoPopup, SourceCard
-  src/components/HUD/kpi/ KpiRing, KpiPanel, AlertPulse, TrendSparkline, GlobalDashboard
-  src/store/useStore.ts   Single Zustand store: WS trace, network/KPI/globe state
+  src/components/layout/       AppShell, Sidebar, Topbar -- the persistent
+                                nav/search shell wrapping every routed view
+  src/components/map/          MapCanvas (MapLibre GL + deck.gl, controlled
+                                view state so flyTo animations aren't undone
+                                by re-renders) and its layers/: facilities,
+                                routes, risk geofences, KPI alerts, ambient
+                                live news pins, commodity heatmap (off by
+                                default, still mock data) -- the four
+                                real-data layers are all clickable and each
+                                triggers the same live query the search bar
+                                would
+  src/components/intelligence/ IntelligencePanel -- context-sensitive right
+                                panel (AI answer, or the selected entity)
+  src/components/HUD/          HudPanel, AgentConsole, ExplanationPanel, InfoPopup, SourceCard
+  src/components/HUD/kpi/      KpiRing, KpiPanel, AlertPulse, TrendSparkline, GlobalDashboard
+  src/views/                   One file per sidebar route (CommandCenterView,
+                                LiveMapView, KpiDashboardView, AlertsCenterView,
+                                InvestigationsView, IntelligenceFeedView, SettingsView)
+  src/store/useStore.ts        Live domain/WS store: trace, network/KPI/map-marker state
+  src/store/useWorkspaceStore.ts Nav/UI store: sidebar, selected entity, favorites,
+                                pinned entities, search history, investigations
+                                (persisted to localStorage)
 databases/
   postgres/         init.sql (sessions/alerts/commodity_history) + kpi.sql (KPI schema)
   postgis/          Geofences/shipping lanes schema + seed data
@@ -159,9 +192,9 @@ of overridable values), its `NEO4J_PASSWORD`/`POSTGRES_PASSWORD` are what the
 containers were actually created with -- docker compose auto-loads `.env`,
 so those values win over `docker-compose.yml`'s fallback defaults.
 
-For Supervisor LLM synthesis, copy `.env.example` to `.env` and set
-`OPENROUTER_API_KEY`. The default `OPENROUTER_MODEL=nex-agi/nex-n2-mini` is a
-very low-cost paid model; you can switch to a `:free` OpenRouter model if you
+For Synthesizer LLM synthesis and Router agent logic, copy `.env.example` to `.env` and set
+`OPENROUTER_API_KEY`. The default `OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct` is a
+very fast open model; you can switch to a `:free` OpenRouter model if you
 prefer zero token cost over steadier availability. Keep `.env` local; don't
 commit or paste keys into chat/logs.
 
@@ -215,7 +248,10 @@ Then, each in its own terminal (all commands run from the repo root):
 # imports the app module.
 cd backend; python run.py
 
-# Agents (repeat per agent: intel, vision, logistics, commodity, supervisor)
+# Agents (repeat per agent: router, mapper, intel, vision, logistics, commodity, synthesizer)
+python agents/router/main.py
+python agents/mapper/main.py
+python agents/synthesizer/main.py
 python agents/intel/main.py
 
 # ETL (needs both a worker and a beat scheduler)
@@ -241,10 +277,16 @@ copy .env.example .env
 npm run dev
 ```
 
-Opens at `http://localhost:5173`. The globe uses three-globe's standard dark
-Earth/bump/star-field textures by default (no API key required); override
-`VITE_GLOBE_IMAGE_URL` / `VITE_GLOBE_BUMP_URL` / `VITE_GLOBE_BACKGROUND_URL`
-in `frontend/.env` for custom textures.
+Opens at `http://localhost:5173`. The map uses OpenFreeMap's free, keyless
+`dark` style by default (no API key, no rate limits); override
+`VITE_MAP_STYLE_URL` in `frontend/.env` to point at a different MapLibre style
+(e.g. a self-hosted PMTiles deployment).
+
+Note: `<React.StrictMode>` is intentionally not enabled in `src/main.tsx` --
+its dev-only double-invoke of mount/cleanup effects breaks `maplibre-gl`'s
+initialization (the map never leaves a blank canvas). This only affects `npm
+run dev`; production builds are unaffected since React only double-invokes in
+development.
 
 ## KPI Intelligence Pipeline
 
@@ -275,11 +317,23 @@ hardcoding them).
 
 ## Next steps
 
-- Implement real fetch/parse logic in the weather/commodity/satellite ETL
-  tasks (`etl/tasks/*.py`) and the Vision agent -- these are still stubs.
+- Weather (Open-Meteo) and satellite (NASA GIBS) ETL are now real and
+  keyless; `commodity` ETL is still a stub (needs a market-data source
+  decision). The Spatial Agent's `weather` risk component now reads real
+  per-entity risk from `weather.updated`; its `geography` component is still
+  a neutral placeholder pending real PostGIS `ST_*` geometry work.
 - Reconcile `shipping_lanes` (PostGIS, numeric id) with the `route_id` text
   identifier used by `order_events`/`kpi_facts`/Neo4j's `CONNECTS_TO`
   relationship -- they're different id spaces today, so route KPI overlays
   fall back to healthy/delayed/blocked status color until a shared key exists.
 - Add authentication to the FastAPI gateway (PRD section 7 lists it as a
   gateway responsibility; not yet implemented).
+- Frontend command-center redesign: layout shell, the live map (facility/
+  route/geofence/alert click parity + ambient news layer), KPI Dashboard,
+  Alerts Center, and Intelligence Feed (satellite imagery/weather/risk
+  rendered as real cards, not raw JSON) are all live. Still open: marker
+  clustering at low zoom; full per-entity-type Intelligence Panel detail
+  (KPI history/news per facility|route|geofence, beyond the current basic
+  card); Investigation Workspace beyond create/list (pinning, comparisons,
+  event replay); search autocomplete; optional backend-inclusive work
+  (persisted/paginated alert & news history, time-playback, `/graph/related/:id`).
