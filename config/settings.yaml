@@ -35,6 +35,8 @@ redis_streams:
   route_recomputed: route.recomputed
   risk_detected: risk.detected
   explanation_updated: explanation.updated
+  kpi_update: kpi.update
+  kpi_alert: kpi.alert
   consumer_group: agents
 
 agents:
@@ -70,6 +72,27 @@ query_router:
     commodity_price:
       keywords: [price, pricing, cost, spike, commodity]
       agents: [commodity, supervisor]
+    # KPI intents are checked before the more generic dependency_lookup below,
+    # since dependency_lookup's broad "supplier"/"factory" keywords would
+    # otherwise shadow these more specific KPI questions (first match wins).
+    inventory_kpi:
+      keywords: [inventory turnover, days on hand, inventory accuracy, stock level, cogs]
+      agents: [logistics, commodity, supervisor]
+    warehouse_health:
+      keywords: [warehouse, fulfillment center, fill rate]
+      agents: [logistics, supervisor]
+    route_health:
+      keywords: [route health, shipping lane, on-time shipping, on time shipping, cycle time]
+      agents: [logistics, supervisor]
+    supplier_performance:
+      keywords: [supplier performance, backorder, worst supplier, supplier cycle]
+      agents: [logistics, supervisor]
+    fulfillment_quality:
+      keywords: [perfect order, picking accuracy, order accuracy, rate of return, damaged shipment]
+      agents: [logistics, supervisor]
+    operational_risk:
+      keywords: [operational risk, compounded risk, risk score, degradation]
+      agents: [spatial, logistics, supervisor]
     dependency_lookup:
       keywords: [depend, supplier, dependency, factory]
       agents: [logistics, supervisor]
@@ -98,3 +121,126 @@ logistics:
     healthy: green
     delayed: amber
     blocked: red
+
+# Weights the Spatial Agent (agents/spatial/src/main.cpp) uses to combine
+# weather risk, geography risk, and KPI health into one compounded
+# operational risk score per entity. Must sum to 1.0. weather/geography
+# default to a neutral 0.5 component score when no signal is available yet
+# (weather ETL and PostGIS geometry work are still stubs) -- that neutral
+# default is a code constant (documented in main.cpp), not a business
+# threshold, so it isn't duplicated here.
+spatial:
+  risk_weights:
+    weather: 0.2
+    geography: 0.2
+    fill_rate: 0.2
+    inventory_accuracy: 0.2
+    picking_accuracy: 0.2
+
+# KPI tunables read by backend/app/services/kpi/threshold_engine.py. Nothing
+# under `kpi:` is ever hardcoded in code -- `thresholds` drive
+# classify()/should_alert(), `direction` tells the engine whether a higher or
+# lower value is healthy, `entities` lists which entity types the KPI applies
+# to, and `interval` is descriptive (realtime KPIs recompute inline on every
+# relevant webhook; daily ones are still recomputed on webhook events, just
+# semantically represent a daily aggregate window).
+kpi:
+  fill_rate:
+    interval: realtime
+    entities: [warehouse, route]
+    direction: higher_is_better
+    thresholds:
+      green: 98
+      amber: 95
+      red: 90
+    alert: true
+
+  perfect_order_rate:
+    interval: daily
+    entities: [route]
+    direction: higher_is_better
+    thresholds:
+      green: 95
+      amber: 90
+      red: 85
+    alert: true
+
+  picking_accuracy:
+    interval: realtime
+    entities: [warehouse]
+    direction: higher_is_better
+    thresholds:
+      green: 99.89
+      amber: 99
+      red: 97
+    alert: true
+
+  inventory_turnover:
+    interval: daily
+    entities: [warehouse, factory]
+    direction: higher_is_better
+    thresholds:
+      green: 6
+      amber: 4
+      red: 2
+    alert: true
+
+  inventory_accuracy:
+    interval: realtime
+    entities: [warehouse]
+    direction: higher_is_better
+    thresholds:
+      green: 99
+      amber: 97
+      red: 95
+    alert: true
+
+  days_on_hand:
+    interval: daily
+    entities: [warehouse, factory]
+    direction: lower_is_better
+    thresholds:
+      green: 30
+      amber: 45
+      red: 60
+    alert: true
+
+  return_rate:
+    interval: daily
+    entities: [supplier, warehouse]
+    direction: lower_is_better
+    thresholds:
+      green: 2
+      amber: 5
+      red: 8
+    alert: true
+
+  backorder_rate:
+    interval: realtime
+    entities: [supplier]
+    direction: lower_is_better
+    thresholds:
+      green: 3
+      amber: 7
+      red: 12
+    alert: true
+
+  on_time_shipping:
+    interval: realtime
+    entities: [route]
+    direction: higher_is_better
+    thresholds:
+      green: 95
+      amber: 90
+      red: 85
+    alert: true
+
+  order_cycle_time:
+    interval: daily
+    entities: [route, supplier]
+    direction: lower_is_better
+    thresholds:
+      green: 48
+      amber: 72
+      red: 96
+    alert: true

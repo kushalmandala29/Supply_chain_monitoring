@@ -10,23 +10,34 @@ if sys.platform == "win32":
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.kpi_router import router as kpi_router
 from app.api.map_router import router as map_router
 from app.api.websocket import get_map_layers, handle_connection
-from app.core.config import get_settings
+from app.core.config import get_platform_config, get_settings
 from app.core.neo4j_client import close_neo4j_driver
 
 settings = get_settings()
 
 app = FastAPI(title="Jarvis Supply Chain Gateway")
 
+# Build the allowed-origins list from the env variable, then always
+# append the wildcard so LAN / WSL2 IPs never get accidentally blocked
+# in local dev.  In production, set CORS_ORIGINS to a strict list and
+# remove the wildcard entry below.
+_cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+if "*" not in _cors_origins:
+    _cors_origins.append("*")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
+    allow_origins=_cors_origins,
+    allow_credentials=False,   # must be False when allow_origins contains "*"
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(map_router)
+app.include_router(kpi_router)
 
 
 @app.on_event("shutdown")
@@ -42,6 +53,14 @@ async def health() -> dict:
 @app.get("/config/map-layers")
 async def map_layers() -> list[dict]:
     return get_map_layers()
+
+
+@app.get("/config/kpi-thresholds")
+async def kpi_thresholds() -> dict:
+    """The `kpi:` section of config/settings.yaml (thresholds/direction/
+    interval/alert per KPI) -- lets the frontend display real threshold
+    values instead of hardcoding them client-side."""
+    return get_platform_config().get("kpi", {})
 
 
 @app.websocket("/ws")

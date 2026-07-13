@@ -5,12 +5,21 @@ flows through the shared blackboard (Redis Streams).
 """
 import asyncio
 import logging
+import sys
 import time
 from abc import ABC, abstractmethod
 from typing import Any
 
 from .config import get_agent_settings, get_platform_config
 from .stream_bus import StreamBus
+
+# psycopg's async mode can't run under Windows' default ProactorEventLoop --
+# same fix as backend/run.py, needed here too now that Logistics/Commodity/
+# Intel/Supervisor read Postgres directly via common/postgres_client.py.
+# Must be set before asyncio.run() creates the loop, so this runs at import
+# time rather than inside run_agent().
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 logger = logging.getLogger(__name__)
 

@@ -6,6 +6,7 @@ OpenRouter model for concise operational guidance.
 """
 import asyncio
 import logging
+import math
 import re
 import sys
 import time
@@ -15,6 +16,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+from neo4j import AsyncGraphDatabase
 
 # Makes `agents/common` importable whether this runs from Docker (where it's
 # copied in as a sibling of main.py) or natively from the repo (where it's
@@ -23,8 +25,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.base_agent import BaseAgent, run_agent
 from common.config import get_agent_settings
+from common.postgres_client import get_postgres_connection
 
 logger = logging.getLogger(__name__)
+
+# Wider than Intel's NEARBY_RADIUS_KM -- the Supervisor is giving broad
+# operational context for the whole answer, not scoring one specific event.
+NEARBY_RADIUS_KM = 500.0
 
 NOMINATIM_USER_AGENT = "jarvis-supply-chain-intelligence/0.1"
 SEARCH_USER_AGENT = (
@@ -106,6 +113,13 @@ class SupervisorAgent(BaseAgent):
     name = "supervisor"
     output_stream_key = "explanation_updated"
 
+    def __init__(self) -> None:
+        super().__init__()
+        settings = get_agent_settings()
+        self._driver = AsyncGraphDatabase.driver(
+            settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
+        )
+
     async def handle(self, routed_query: dict[str, Any]) -> dict[str, Any] | None:
         query = routed_query["query"]
         session_id = routed_query.get("session_id")
@@ -118,15 +132,73 @@ class SupervisorAgent(BaseAgent):
         )
 
         location = await self._resolve_location(query, sibling_results)
-        explanation = await self._synthesize(query, sources, sibling_results, settings)
+        kpis = await self._fetch_nearby_kpis(location) if location else []
+        explanation = await self._synthesize(query, sources, sibling_results, kpis, settings)
 
         return {
             "query": query,
             "explanation": explanation,
             "sources": sources,
             "location": location,
+            "kpis": kpis,
             "agents_consulted": list(sibling_results.keys()),
         }
+
+    async def _fetch_nearby_kpis(self, location: dict[str, Any]) -> list[dict[str, Any]]:
+        """Grounds the synthesis in real KPI numbers for facilities near the
+        resolved location -- PostgreSQL (kpi_facts) is the source of truth;
+        Neo4j is only used here to find which entity ids are nearby."""
+        lat, lon = location.get("lat"), location.get("lon")
+        if lat is None or lon is None:
+            return []
+
+        delta_lat = NEARBY_RADIUS_KM / 111.0
+        delta_lon = NEARBY_RADIUS_KM / (111.0 * max(math.cos(math.radians(lat)), 0.01))
+        async with self._driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (n)
+                WHERE (n:Warehouse OR n:Port OR n:Factory OR n:Supplier)
+                      AND n.lat >= $min_lat AND n.lat <= $max_lat
+                      AND n.lon >= $min_lon AND n.lon <= $max_lon
+                RETURN n.id AS id, n.name AS name, labels(n)[0] AS type
+                """,
+                min_lat=lat - delta_lat, max_lat=lat + delta_lat,
+                min_lon=lon - delta_lon, max_lon=lon + delta_lon,
+            )
+            nearby = await result.data()
+        if not nearby:
+            return []
+
+        ids = [n["id"] for n in nearby]
+        conn = await get_postgres_connection()
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT DISTINCT ON (entity_id, kpi_name) entity_id, kpi_name, kpi_value, computed_at
+                    FROM kpi_facts
+                    WHERE entity_id = ANY(%s)
+                    ORDER BY entity_id, kpi_name, computed_at DESC
+                    """,
+                    (ids,),
+                )
+                rows = await cur.fetchall()
+        finally:
+            await conn.close()
+
+        names_by_id = {n["id"]: {"name": n["name"], "type": n["type"]} for n in nearby}
+        return [
+            {
+                "entity_id": entity_id,
+                "name": names_by_id.get(entity_id, {}).get("name"),
+                "entity_type": names_by_id.get(entity_id, {}).get("type"),
+                "kpi_name": kpi_name,
+                "kpi_value": float(kpi_value),
+                "computed_at": computed_at.isoformat(),
+            }
+            for entity_id, kpi_name, kpi_value, computed_at in rows
+        ]
 
     async def _collect_sibling_results(
         self, session_id: str | None, sibling_agents: list[str]
@@ -224,11 +296,21 @@ class SupervisorAgent(BaseAgent):
         query: str,
         sources: list[dict[str, Any]],
         sibling_results: dict[str, Any],
+        kpis: list[dict[str, Any]],
         settings,
     ) -> str:
         context_parts = []
         for agent, result in sibling_results.items():
             context_parts.append(f"{agent.title()} Agent findings: {self._summarize_agent_payload(result)}")
+        if kpis:
+            context_parts.append(
+                "Live KPI values for nearby facilities (PostgreSQL, source of truth):\n"
+                + "\n".join(
+                    f"- {k['name'] or k['entity_id']} ({k['entity_type']}): "
+                    f"{k['kpi_name'].replace('_', ' ')} = {k['kpi_value']:.1f}"
+                    for k in kpis
+                )
+            )
         if sources:
             context_parts.append(
                 "Web search results:\n"
@@ -250,6 +332,22 @@ class SupervisorAgent(BaseAgent):
             titles = [a.get("title") for a in result["articles"][:3] if isinstance(a, dict) and a.get("title")]
             if titles:
                 return "Recent mapped articles: " + "; ".join(titles)
+        if isinstance(result.get("kpi_impact"), list) and result["kpi_impact"]:
+            return " ".join(item.get("note", "") for item in result["kpi_impact"][:3])
+        if isinstance(result.get("results"), list) and result["results"]:
+            kpi_name = result.get("kpi_name", "kpi")
+            ranked = ", ".join(
+                f"{r.get('name') or r.get('entity_id')}={r.get('kpi_value')}" for r in result["results"][:3]
+            )
+            return f"Ranked by {kpi_name}: {ranked}"
+        if isinstance(result.get("operational_risk"), list) and result["operational_risk"]:
+            worst = max(result["operational_risk"], key=lambda r: r.get("compounded_risk", 0))
+            return (
+                f"{len(result['operational_risk'])} entit(y/ies) scored; worst is "
+                f"{worst.get('entity_id')} at {worst.get('severity')} compounded risk."
+            )
+        if isinstance(result.get("correlated_risk"), list) and result["correlated_risk"]:
+            return f"{len(result['correlated_risk'])} commodity/inventory risk co-occurrence(s) detected."
         if isinstance(result.get("alerts"), list) and result["alerts"]:
             return f"{len(result['alerts'])} active alert(s)."
         if isinstance(result.get("prices"), list) and result["prices"]:
@@ -276,10 +374,13 @@ class SupervisorAgent(BaseAgent):
                     "role": "system",
                     "content": (
                         "You are the Supervisor Agent for a supply-chain intelligence platform. "
-                        "Act like an operations lead: synthesize specialist-agent findings and web "
-                        "sources into concise, factual, decision-ready guidance. Prioritize supply "
-                        "chain impact, mapped locations, likely affected transport/supplier flows, "
-                        "confidence, and immediate actions. Do not invent facts; say what is unknown."
+                        "Act like an operations lead: synthesize specialist-agent findings, live KPI "
+                        "values, and web sources into concise, factual, decision-ready guidance. "
+                        "Prioritize supply chain impact, mapped locations, likely affected transport/"
+                        "supplier flows, confidence, and immediate actions. When KPI values are "
+                        "provided, ground the supply-chain-impact section in those numbers and note "
+                        "which facilities are already degraded or at risk of degrading. Do not invent "
+                        "facts or KPI numbers; say what is unknown."
                     ),
                 },
                 {
@@ -366,6 +467,10 @@ class SupervisorAgent(BaseAgent):
             "watching the mapped live feed, and rerun once the model call succeeds.\n"
             f"Confidence: Medium on source collection, low on final synthesis. Error: {exc}."
         )
+
+    async def close(self) -> None:
+        await self._driver.close()
+        await super().close()
 
 
 if __name__ == "__main__":

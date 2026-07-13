@@ -33,6 +33,8 @@ RESULT_STREAM_KEYS = [
     "route_recomputed",
     "risk_detected",
     "explanation_updated",
+    "kpi_update",
+    "kpi_alert",
 ]
 AMBIENT_REPLAY_STREAM_KEYS = [
     "news_ingested",
@@ -40,6 +42,8 @@ AMBIENT_REPLAY_STREAM_KEYS = [
     "commodity_updated",
     "satellite_ready",
     "risk_detected",
+    "kpi_update",
+    "kpi_alert",
 ]
 
 

@@ -1,10 +1,11 @@
-import { ReactNode } from "react";
+import { CSSProperties, ReactNode } from "react";
 
 interface HudPanelProps {
   title: string;
   subtitle?: string;
   children: ReactNode;
   className?: string;
+  style?: CSSProperties;
   accentColor?: "cyan" | "amber" | "red" | "green";
   noPad?: boolean;
 }
@@ -21,6 +22,7 @@ export default function HudPanel({
   subtitle,
   children,
   className = "",
+  style,
   accentColor = "cyan",
   noPad = false,
 }: HudPanelProps) {
@@ -32,6 +34,7 @@ export default function HudPanel({
         transition-all duration-300
         ${className}
       `}
+      style={style}
     >
       {/* Header bar */}
       <div className="flex items-center justify-between border-b border-white/5 px-4 py-2.5">

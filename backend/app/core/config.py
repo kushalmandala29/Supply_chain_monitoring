@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000
     jwt_secret: str = "change-me"
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5173,http://localhost:3000,http://172.31.98.253:5173,http://172.31.98.253:3000"
 
 
 @lru_cache
