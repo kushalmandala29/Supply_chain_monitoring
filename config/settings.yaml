@@ -1,0 +1,100 @@
+# Central configuration for the platform.
+# Nothing geographic, supplier-specific, or provider-specific belongs here as a
+# hardcoded value in code -- all such data must be resolved at runtime from the
+# Knowledge Layer (Neo4j / PostGIS) or from these tunables.
+
+etl:
+  news:
+    interval_minutes: 5
+    sources: [gdelt, reliefweb, rss, local_media, newsapi]
+    # Search term for the live NewsAPI fetch (config-driven, not tied to any
+    # specific country/supplier). Adjust freely.
+    query: "supply chain disruption OR shipping delay OR port congestion"
+  weather:
+    interval_minutes: 15
+    sources: [weather_api, maritime_alerts]
+  commodity:
+    interval_minutes: 60
+    sources: [market_api]
+  satellite:
+    interval_minutes: 45
+    sources: [nasa_gibs]
+
+risk_thresholds:
+  high: 0.85
+  medium: 0.60
+  low: 0.0
+
+redis_streams:
+  query_received: query.received
+  agent_status: agent.status
+  news_ingested: news.ingested
+  weather_updated: weather.updated
+  commodity_updated: commodity.updated
+  satellite_ready: satellite.ready
+  route_recomputed: route.recomputed
+  risk_detected: risk.detected
+  explanation_updated: explanation.updated
+  consumer_group: agents
+
+agents:
+  intel:
+    enabled: true
+    priority: 1
+  spatial:
+    enabled: true
+    priority: 2
+  vision:
+    enabled: true
+    priority: 2
+  logistics:
+    enabled: true
+    priority: 2
+  commodity:
+    enabled: true
+    priority: 1
+  supervisor:
+    enabled: true
+    priority: 3
+
+# Intent -> agent activation map used by the Query Router. Adding a new intent
+# or agent is a config change, not a code change. `supervisor` is included on
+# every intent -- it's the one that waits for its siblings, merges their
+# findings, and produces the final explanation (PRD section 8's Narrative
+# Agent responsibility).
+query_router:
+  intents:
+    weather_impact:
+      keywords: [storm, hurricane, typhoon, flood, weather, cyclone]
+      agents: [intel, spatial, vision, logistics, supervisor]
+    commodity_price:
+      keywords: [price, pricing, cost, spike, commodity]
+      agents: [commodity, supervisor]
+    dependency_lookup:
+      keywords: [depend, supplier, dependency, factory]
+      agents: [logistics, supervisor]
+    satellite_view:
+      keywords: [satellite, imagery, cloud cover]
+      agents: [vision, spatial, supervisor]
+    default:
+      agents: [intel, supervisor]
+
+map_layers:
+  - id: weather
+    enabled: true
+  - id: satellite
+    enabled: true
+  - id: commodity_heatmap
+    enabled: false
+  - id: logistics_routes
+    enabled: true
+  - id: news
+    enabled: true
+  - id: agent_trace
+    enabled: true
+
+logistics:
+  route_states:
+    healthy: green
+    delayed: amber
+    blocked: red

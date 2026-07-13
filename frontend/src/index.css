@@ -1,0 +1,142 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   DESIGN TOKENS
+   ============================================================ */
+:root {
+  --col-bg:          #03060f;
+  --col-surface:     rgba(8, 16, 36, 0.72);
+  --col-border:      rgba(34, 211, 238, 0.14);
+  --col-border-hi:   rgba(34, 211, 238, 0.38);
+  --col-cyan:        #22d3ee;
+  --col-cyan-dim:    rgba(34, 211, 238, 0.55);
+  --col-text:        #cce8f0;
+  --col-text-muted:  rgba(180, 220, 232, 0.45);
+  --col-danger:      #f87171;
+  --col-warn:        #fbbf24;
+  --col-ok:          #34d399;
+
+  --blur-glass:      blur(18px) saturate(160%);
+  --shadow-panel:    0 4px 40px rgba(0,0,0,0.55), 0 0 0 1px var(--col-border);
+  --shadow-glow:     0 0 18px rgba(34, 211, 238, 0.18);
+}
+
+/* ============================================================
+   BASE RESET
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--col-bg);
+  font-family: 'Inter', system-ui, sans-serif;
+  color: var(--col-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ============================================================
+   CUSTOM SCROLLBAR
+   ============================================================ */
+::-webkit-scrollbar              { width: 4px; }
+::-webkit-scrollbar-track        { background: transparent; }
+::-webkit-scrollbar-thumb        { background: var(--col-border-hi); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover  { background: var(--col-cyan-dim); }
+
+/* ============================================================
+   GLASS PANEL
+   ============================================================ */
+.glass {
+  background:   var(--col-surface);
+  backdrop-filter: var(--blur-glass);
+  -webkit-backdrop-filter: var(--blur-glass);
+  border: 1px solid var(--col-border);
+  box-shadow: var(--shadow-panel);
+}
+
+.glass-hi {
+  border-color: var(--col-border-hi);
+  box-shadow: var(--shadow-panel), var(--shadow-glow);
+}
+
+/* ============================================================
+   SCAN-LINE VIGNETTE (subtle CRT feel)
+   ============================================================ */
+.scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 3px,
+    rgba(0,0,0,0.06) 3px,
+    rgba(0,0,0,0.06) 4px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ============================================================
+   ANIMATED GRADIENT BORDER
+   ============================================================ */
+@keyframes border-pulse {
+  0%, 100% { border-color: var(--col-border); }
+  50%       { border-color: var(--col-border-hi); }
+}
+.border-pulse { animation: border-pulse 3s ease-in-out infinite; }
+
+/* ============================================================
+   GLOW TEXT
+   ============================================================ */
+.glow-text {
+  color: var(--col-cyan);
+  text-shadow: 0 0 12px rgba(34, 211, 238, 0.55);
+}
+
+/* ============================================================
+   BLINK CURSOR (agent console)
+   ============================================================ */
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.blink { animation: blink 1.1s step-end infinite; }
+
+/* ============================================================
+   FADE-IN SLIDE-UP (new trace entries)
+   ============================================================ */
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.slide-up { animation: slide-up 0.22s ease-out both; }
+
+/* ============================================================
+   PULSE DOT (connection status)
+   ============================================================ */
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1);   opacity: 1; }
+  50%       { transform: scale(1.6); opacity: 0.5; }
+}
+.pulse-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
+
+/* ============================================================
+   SHIMMER LOADING SKELETON
+   ============================================================ */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, #0c1a2e 25%, #132338 50%, #0c1a2e 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.8s infinite linear;
+}
+
+/* ============================================================
+   INPUT & BUTTON RESETS
+   ============================================================ */
+input, button { font-family: inherit; }

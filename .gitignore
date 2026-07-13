@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# C++
+build/
+*.o
+*.obj
+
+# Env
+.env
+*.local
+
+# Docker
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data / logs
+*.log
+data/
+
+# Celery Beat runtime schedule database
+celerybeat-schedule*
