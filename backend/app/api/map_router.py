@@ -52,15 +52,21 @@ async def _fetch_geo_layers() -> tuple[list[dict], list[dict]]:
     try:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT id, origin_ref, destination_ref, status, ST_AsGeoJSON(geom) FROM shipping_lanes"
+                "SELECT id, route_id, origin_ref, destination_ref, status, ST_AsGeoJSON(geom) FROM shipping_lanes"
             )
             routes = [
                 {
                     "id": row[0],
-                    "origin_ref": row[1],
-                    "destination_ref": row[2],
-                    "status": row[3],
-                    "geometry": json.loads(row[4]),
+                    # Shared key with order_events/kpi_facts/Neo4j's CONNECTS_TO
+                    # -- `id` above is only PostGIS's internal PK and must never
+                    # be used to join against KPI data. Null for any row from a
+                    # database that hasn't run migrate_route_id.sql yet; the
+                    # frontend falls back to status-only coloring in that case.
+                    "route_id": row[1],
+                    "origin_ref": row[2],
+                    "destination_ref": row[3],
+                    "status": row[4],
+                    "geometry": json.loads(row[5]),
                 }
                 for row in await cur.fetchall()
             ]

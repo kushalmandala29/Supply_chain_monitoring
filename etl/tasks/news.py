@@ -108,6 +108,7 @@ def _normalize_article(
     url: str | None,
     published_at: str | None,
     location_hint: str | None = None,
+    image_url: str | None = None,
 ) -> dict | None:
     if not title or not url:
         return None
@@ -118,6 +119,7 @@ def _normalize_article(
         "url": url,
         "publishedAt": published_at,
         "location_hint": location_hint,
+        "image_url": image_url,
         "risk_tags": tags,
         "risk_level": "medium" if tags else "low",
     }
@@ -147,7 +149,6 @@ def _fetch_newsapi_articles(settings, query: str) -> list[dict]:
                 "apiKey": settings.news_api_key,
                 "language": "en",
                 "sortBy": "publishedAt",
-                "pageSize": 10,
             },
             timeout=10,
         )
@@ -162,6 +163,7 @@ def _fetch_newsapi_articles(settings, query: str) -> list[dict]:
             source=(article.get("source") or {}).get("name"),
             url=article.get("url"),
             published_at=article.get("publishedAt"),
+            image_url=article.get("urlToImage"),
         )
         if normalized:
             articles.append(normalized)
@@ -177,7 +179,6 @@ def _fetch_gdelt_articles(settings, query: str) -> list[dict]:
                     "query": query,
                     "mode": "ArtList",
                     "format": "json",
-                    "maxrecords": 10,
                     "sort": "DateDesc",
                 },
                 timeout=20,
@@ -197,6 +198,7 @@ def _fetch_gdelt_articles(settings, query: str) -> list[dict]:
             url=article.get("url"),
             published_at=article.get("seendate"),
             location_hint=article.get("sourcecountry"),
+            image_url=article.get("socialimage"),
         )
         if normalized:
             articles.append(normalized)

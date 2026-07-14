@@ -10,15 +10,22 @@ export function useAlertLayer(onSelectAlert?: (entityId: string, kpi: string, la
     // We only want to show recent alerts, say within the last 5 minutes (300000 ms)
     const recentAlerts = alerts.filter((a) => Date.now() - a.receivedAt < 300000);
 
-    // Map alerts to locations
+    // Map alerts to locations. Facility entities have a flat {lat, lon};
+    // route entities have {origin, destination} instead (see
+    // backend/app/api/kpi_router.py's _fetch_route_coords) -- without this
+    // branch every route-entity alert (e.g. on_time_shipping breaches) was
+    // silently dropped from the map entirely.
     const alertData = recentAlerts
       .map((alert) => {
-        const entity = kpiByEntity[alert.entity_id];
-        if (!entity || !entity.location || !("lat" in entity.location)) return null;
+        const location = kpiByEntity[alert.entity_id]?.location;
+        if (!location) return null;
+        if ("lat" in location) {
+          return { ...alert, lat: location.lat, lon: location.lon };
+        }
         return {
           ...alert,
-          lat: entity.location.lat,
-          lon: entity.location.lon,
+          lat: (location.origin.lat + location.destination.lat) / 2,
+          lon: (location.origin.lon + location.destination.lon) / 2,
         };
       })
       .filter((a): a is NonNullable<typeof a> => a !== null);

@@ -72,15 +72,20 @@ function RiskContent({ payload }: { payload: any }) {
 
 function NewsContent({ payload }: { payload: any }) {
   return (
-    <div className="space-y-2">
-      {(payload.articles as any[]).slice(0, 4).map((article: any, i: number) => (
-        <div key={i}>
-          <div className="font-semibold">{article.title}</div>
-          {article.url && (
-            <a href={article.url} target="_blank" rel="noreferrer" className="text-[11px] text-blue-400 hover:underline">
-              Source link
-            </a>
+    <div className="space-y-3">
+      {(payload.articles as any[]).map((article: any, i: number) => (
+        <div key={i} className="flex gap-2">
+          {article.image_url && (
+            <img src={article.image_url} alt="" className="w-12 h-12 rounded object-cover border border-white/10 shrink-0" />
           )}
+          <div>
+            <div className="font-semibold text-sm leading-tight">{article.title}</div>
+            {article.url && (
+              <a href={article.url} target="_blank" rel="noreferrer" className="text-[11px] text-blue-400 hover:underline">
+                Source link
+              </a>
+            )}
+          </div>
         </div>
       ))}
     </div>

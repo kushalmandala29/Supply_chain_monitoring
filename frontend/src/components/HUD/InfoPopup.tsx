@@ -6,6 +6,9 @@ import { SourceCard } from "./SourceCard";
 
 export interface PopupData {
   id:       string;
+  /** Header label distinguishing this popup's proof type when several are
+   * open at once (e.g. "Satellite view" vs "Web sources" vs "Live news") */
+  label?: string;
   /** Quoted text, when this popup was spawned from a sentence click */
   sentence?: string;
   /** Direct image URL, when this popup was auto-spawned by an imagery event (e.g. Vision Agent) */
@@ -44,7 +47,7 @@ export function InfoPopup({ popup, onClose, zIndex, onFocus }: InfoPopupProps) {
     const W = window.innerWidth;
     const H = window.innerHeight;
     setPos((p) => ({
-      x: Math.min(Math.max(p.x, 8), W - 296),
+      x: Math.min(Math.max(p.x, 8), W - 328),
       y: Math.min(Math.max(p.y, 8), H - 100),
     }));
   }, []);
@@ -77,7 +80,7 @@ export function InfoPopup({ popup, onClose, zIndex, onFocus }: InfoPopupProps) {
   return (
     <div
       className={`
-        fixed w-72 glass rounded-2xl overflow-hidden select-none
+        fixed w-80 glass rounded-2xl overflow-hidden select-none
         border border-cyan-400/30
         transition-all duration-300 ease-out
         shadow-[0_0_32px_rgba(34,211,238,0.15),0_8px_40px_rgba(0,0,0,0.6)]
@@ -101,7 +104,7 @@ export function InfoPopup({ popup, onClose, zIndex, onFocus }: InfoPopupProps) {
             onMouseDown={(e) => e.stopPropagation()}
             title="Close"
           />
-          <span className="text-[9px] font-mono text-cyan-400/40">◈ INTEL DETAIL</span>
+          <span className="text-[9px] font-mono text-cyan-400/40">◈ {(popup.label ?? "INTEL DETAIL").toUpperCase()}</span>
         </div>
         <span className="text-[8px] font-mono text-cyan-400/25 uppercase tracking-widest">
           drag to move
@@ -142,15 +145,18 @@ export function InfoPopup({ popup, onClose, zIndex, onFocus }: InfoPopupProps) {
         </div>
       )}
 
-      {/* ── Related sources (skipped entirely for image-only popups with none) ── */}
+      {/* ── Related sources -- every source the agent actually found, not a
+           fixed count (some queries turn up 2, some turn up 15) ────────── */}
       {popup.sources.length > 0 ? (
         <div className="px-3 pb-3 space-y-2">
           <div className="text-[8px] font-semibold uppercase tracking-widest text-cyan-400/35 mb-1">
-            Related intelligence
+            Related intelligence · {popup.sources.length}
           </div>
-          {popup.sources.slice(0, 2).map((s, i) => (
-            <SourceCard key={s.url ?? i} source={s} index={i} delay={i * 60} />
-          ))}
+          <div className="space-y-2 max-h-[22rem] overflow-y-auto pr-0.5">
+            {popup.sources.map((s, i) => (
+              <SourceCard key={s.url ?? i} source={s} index={i} delay={Math.min(i, 8) * 60} />
+            ))}
+          </div>
         </div>
       ) : popup.sentence ? (
         <div className="px-3 pb-3">

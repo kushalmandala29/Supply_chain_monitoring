@@ -140,12 +140,14 @@ class SynthesizerAgent(BaseAgent):
         await self._publish_status(session_id, query, "started", detail="Synthesizing with LLM...")
         explanation = await self._synthesize(query, sources, sibling_results, kpis, settings, session_id=session_id)
 
+        image_url = next((s.get("image_url") for s in sources if s.get("image_url")), None)
         return {
             "query": query,
             "explanation": explanation,
             "sources": sources,
             "location": location,
             "kpis": kpis,
+            "image_url": image_url,
             "agents_consulted": list(sibling_results.keys()),
         }
 
@@ -251,7 +253,7 @@ class SynthesizerAgent(BaseAgent):
 
         soup = BeautifulSoup(response.text, "html.parser")
         results = []
-        for result in soup.select(".result__body")[:5]:
+        for result in soup.select(".result__body"):
             title_el = result.select_one(".result__a")
             if not title_el:
                 continue
@@ -263,7 +265,39 @@ class SynthesizerAgent(BaseAgent):
                     "content": snippet_el.get_text(strip=True) if snippet_el else "",
                 }
             )
-        return results
+        # Real photos, not a fallback -- og:image/twitter:image is how a page
+        # declares its own "this is the picture for this story" share image,
+        # so this is a genuine image of the actual event/scene when the
+        # source site has one, not a generic/synthetic picture. Best-effort:
+        # many news sites block bare bot GETs or are just slow, so a source
+        # without an image_url after this just doesn't get one -- it isn't
+        # retried or faked.
+        enrich_semaphore = asyncio.Semaphore(6)  # polite concurrency cap, not a result-count cap
+
+        async def enrich_result(client: httpx.AsyncClient, result: dict[str, Any]) -> dict[str, Any]:
+            url = result["url"]
+            if not url or url.startswith("/"):
+                return result
+            async with enrich_semaphore:
+                try:
+                    resp = await client.get(url, timeout=5.0, follow_redirects=True)
+                    if resp.status_code == 200:
+                        page_soup = BeautifulSoup(resp.text, "html.parser")
+                        image_meta = (
+                            page_soup.select_one("meta[property='og:image']")
+                            or page_soup.select_one("meta[name='twitter:image']")
+                            or page_soup.select_one("meta[property='og:image:secure_url']")
+                        )
+                        if image_meta and image_meta.get("content"):
+                            result["image_url"] = image_meta.get("content")
+                except Exception:
+                    pass
+            return result
+
+        async with httpx.AsyncClient(headers=headers, verify=False) as client:
+            enriched_results = await asyncio.gather(*(enrich_result(client, r) for r in results))
+
+        return list(enriched_results)
 
     async def _resolve_location(
         self, query: str, sibling_results: dict[str, Any]

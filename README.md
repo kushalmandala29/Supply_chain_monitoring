@@ -166,7 +166,8 @@ frontend/
                                 (persisted to localStorage)
 databases/
   postgres/         init.sql (sessions/alerts/commodity_history) + kpi.sql (KPI schema)
-  postgis/          Geofences/shipping lanes schema + seed data
+  postgis/          Geofences/shipping lanes schema + seed data +
+                      migrate_route_id.sql (backfill for pre-route_id DBs)
   neo4j/            constraints.cypher, seed.cypher, kpi_properties.cypher
 config/settings.yaml  Central, hot-editable config: ETL schedules, risk
                       thresholds, query-router intents, agent priorities,
@@ -216,6 +217,18 @@ Replace `<NEO4J_PASSWORD>` with whatever `NEO4J_PASSWORD` is set to in your
 only applies if you had no `.env` yet at that point). If you get "client is
 unauthorized due to authentication failure," check `.env`'s `NEO4J_PASSWORD`
 first before assuming something else is wrong.
+
+If your `postgres_data` volume was created before `shipping_lanes.route_id`
+existed (i.e. you seeded before this note was added), backfill it once so
+route KPI overlays can join real on-time/cycle-time data instead of falling
+back to status-only color:
+
+```
+cat databases/postgis/migrate_route_id.sql | docker compose exec -T postgres psql -U supply_chain -d supply_chain
+```
+
+Safe to run even if already migrated, or if `seed.sql` was accidentally run
+more than once before it had an `ON CONFLICT` guard (it dedupes first).
 
 The Postgres KPI tables (`kpi_facts`, `inventory_snapshots`, `order_events`) load
 automatically from `databases/postgres/kpi.sql` on first container init (see
@@ -322,10 +335,6 @@ hardcoding them).
   decision). The Spatial Agent's `weather` risk component now reads real
   per-entity risk from `weather.updated`; its `geography` component is still
   a neutral placeholder pending real PostGIS `ST_*` geometry work.
-- Reconcile `shipping_lanes` (PostGIS, numeric id) with the `route_id` text
-  identifier used by `order_events`/`kpi_facts`/Neo4j's `CONNECTS_TO`
-  relationship -- they're different id spaces today, so route KPI overlays
-  fall back to healthy/delayed/blocked status color until a shared key exists.
 - Add authentication to the FastAPI gateway (PRD section 7 lists it as a
   gateway responsibility; not yet implemented).
 - Frontend command-center redesign: layout shell, the live map (facility/

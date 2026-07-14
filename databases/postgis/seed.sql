@@ -13,17 +13,23 @@
 -- straight line, so trans-Pacific routes don't visually cross the antimeridian
 -- the wrong way.
 
-INSERT INTO shipping_lanes (origin_ref, destination_ref, status, geom, metadata)
+-- route_id matches order_events.route_id / kpi_facts.entity_id / Neo4j's
+-- CONNECTS_TO.route_id (databases/neo4j/seed.cypher) -- this is what lets
+-- route KPI overlays join real on-time/cycle-time data onto these lanes
+-- instead of falling back to status-only coloring (see migrate_route_id.sql
+-- for backfilling a database seeded before this column existed).
+INSERT INTO shipping_lanes (route_id, origin_ref, destination_ref, status, geom, metadata)
 VALUES
-    ('port-shanghai', 'port-los-angeles', 'healthy',
+    ('route-shanghai-la', 'port-shanghai', 'port-los-angeles', 'healthy',
      ST_GeomFromText('LINESTRING(121.49 31.22, -118.26 33.73)', 4326),
-     '{"route_id": "route-shanghai-la", "mode": "sea"}'::jsonb),
-    ('port-shanghai', 'port-rotterdam', 'delayed',
+     '{"mode": "sea"}'::jsonb),
+    ('route-shanghai-rotterdam', 'port-shanghai', 'port-rotterdam', 'delayed',
      ST_GeomFromText('LINESTRING(121.49 31.22, 4.14 51.95)', 4326),
-     '{"route_id": "route-shanghai-rotterdam", "mode": "sea"}'::jsonb),
-    ('port-kaohsiung', 'port-los-angeles', 'blocked',
+     '{"mode": "sea"}'::jsonb),
+    ('route-kaohsiung-la', 'port-kaohsiung', 'port-los-angeles', 'blocked',
      ST_GeomFromText('LINESTRING(120.28 22.61, -118.26 33.73)', 4326),
-     '{"route_id": "route-kaohsiung-la", "mode": "sea"}'::jsonb);
+     '{"mode": "sea"}'::jsonb)
+ON CONFLICT (route_id) DO NOTHING;
 
 INSERT INTO geofences (source_stream, label, risk_level, geom, metadata)
 VALUES

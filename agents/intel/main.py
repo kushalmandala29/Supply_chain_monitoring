@@ -88,7 +88,6 @@ class IntelAgent(BaseAgent):
                     "apiKey": settings.news_api_key,
                     "language": "en",
                     "sortBy": "relevancy",
-                    "pageSize": 5,
                 },
             )
 
@@ -101,6 +100,7 @@ class IntelAgent(BaseAgent):
                 "source": (article.get("source") or {}).get("name"),
                 "url": article.get("url"),
                 "publishedAt": article.get("publishedAt"),
+                "image_url": article.get("urlToImage"),
             }
             for article in response.json().get("articles", [])
         ]

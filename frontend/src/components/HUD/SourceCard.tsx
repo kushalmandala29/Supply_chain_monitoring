@@ -40,7 +40,20 @@ function domainColor(domain: string): string {
 
 /* ── Thumbnail component ───────────────────────────────────────── */
 
-function Thumbnail({ url }: { url: string }) {
+function Thumbnail({ url, imageUrl }: { url: string; imageUrl?: string }) {
+  if (imageUrl) {
+    return (
+      <div className="relative w-full h-full">
+        <img
+          src={imageUrl}
+          alt=""
+          className="w-full h-full object-cover opacity-90"
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+        />
+      </div>
+    );
+  }
+
   const ytId = getYouTubeId(url);
 
   if (ytId) {
@@ -113,7 +126,7 @@ export function SourceCard({ source, index: _index, delay = 0 }: SourceCardProps
     >
       {/* Thumbnail box */}
       <div className="w-[72px] h-[48px] rounded-lg overflow-hidden shrink-0 border border-white/6">
-        <Thumbnail url={url} />
+        <Thumbnail url={url} imageUrl={source.image_url} />
       </div>
 
       {/* Text block */}
@@ -128,6 +141,12 @@ export function SourceCard({ source, index: _index, delay = 0 }: SourceCardProps
                         group-hover:text-cyan-100 transition-colors">
             {title}
           </p>
+          {/* Short description so a video/text source isn't just a bare link */}
+          {source.content && (
+            <p className="text-[10px] text-cyan-300/40 leading-snug line-clamp-2 mt-0.5">
+              {source.content}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-1 mt-1">
           <span className="text-[9px] text-cyan-400/35 truncate">{domain}</span>

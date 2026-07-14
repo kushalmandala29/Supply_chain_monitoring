@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS weather_polygons (
 
 CREATE TABLE IF NOT EXISTS shipping_lanes (
     id              BIGSERIAL PRIMARY KEY,
+    -- Shared key with order_events.route_id / kpi_facts.entity_id / Neo4j's
+    -- CONNECTS_TO.route_id (e.g. "route-shanghai-la") -- the numeric `id`
+    -- above is only PostGIS's internal PK and must never be used to join
+    -- against KPI data (see databases/postgis/migrate_route_id.sql for the
+    -- backfill story on databases created before this column existed).
+    route_id        TEXT,
     origin_ref      TEXT NOT NULL,
     destination_ref TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'healthy',
@@ -37,3 +43,4 @@ CREATE TABLE IF NOT EXISTS shipping_lanes (
 CREATE INDEX IF NOT EXISTS idx_geofences_geom ON geofences USING GIST (geom);
 CREATE INDEX IF NOT EXISTS idx_weather_polygons_geom ON weather_polygons USING GIST (geom);
 CREATE INDEX IF NOT EXISTS idx_shipping_lanes_geom ON shipping_lanes USING GIST (geom);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shipping_lanes_route_id ON shipping_lanes (route_id) WHERE route_id IS NOT NULL;
